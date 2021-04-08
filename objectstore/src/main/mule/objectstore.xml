@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:db="http://www.mulesoft.org/schema/mule/db"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:json="http://www.mulesoft.org/schema/mule/json"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="
+http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd">
+	
+
+
+		
+
+
+	
+	<os:object-store name="Object_store" doc:name="Object store" doc:id="36c2c77b-711f-4d74-9742-bc05ce00d77e" maxEntries="1" entryTtl="1" config-ref="ObjectStore_Config" persistent="false" expirationIntervalUnit="HOURS" entryTtlUnit="HOURS"/>
+	<os:config name="ObjectStore_Config" doc:name="ObjectStore Config" doc:id="a7ea0b9c-7a12-49b7-96a6-82217bc1602f" />
+	<ee:object-store-caching-strategy name="Caching_Strategy" doc:name="Caching Strategy" doc:id="f326bcfd-86e1-4941-a0ba-83b15dc5666b" objectStore="Object_store"/>
+	<db:config name="Database_Config" doc:name="Database Config" doc:id="d985d706-fb12-4a8a-b1f7-3646170d5d11" >
+		<db:my-sql-connection host="127.0.0.1" port="3306" user="root" password="root" database="pets" />
+	</db:config>
+	<http:listener-config name="HTTP_Listener_config" doc:name="HTTP Listener config" doc:id="b54ef36c-29a9-4e23-8310-2b69f1f81e1c" >
+		<http:listener-connection host="0.0.0.0" port="9061" />
+	</http:listener-config>
+	<http:request-config name="HTTP_Request_configuration" doc:name="HTTP Request configuration" doc:id="928dc3a4-b9f8-415b-a192-72114a7e7c5f">
+		<http:request-connection host="localhost" port="9061" />
+	</http:request-config>
+	
+	
+	<flow name="watermark">
+    <scheduler doc:name="Scheduler" doc:id="564de670-4f0a-4f37-9c1f-245024f7e00b">
+			<scheduling-strategy>
+				<fixed-frequency frequency="3" timeUnit="MINUTES" />
+			</scheduling-strategy>
+		</scheduler>
+		<os:retrieve key="watermark" objectStore="Object_store" target="watermark">
+        <os:default-value><![CDATA[#[(now() - |P1D|) as Date]]]></os:default-value>
+    </os:retrieve>
+    <db:select doc:name="Select" doc:id="39cbd0e1-e68e-47a9-ae42-a8e9c1a4e3bd" config-ref="Database_Config">
+			<db:sql ><![CDATA[select id,dateValue from watermark where dateValue > :dateValue]]></db:sql>
+			<db:input-parameters ><![CDATA[#['dateValue' : vars.watermark]]]></db:input-parameters>
+		</db:select>
+    <ee:transform doc:name="Transform Message" doc:id="3535e03d-f144-4a0f-bb36-0dde8db8f41f">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+
+	id: payload.id,
+	dateValue: payload.dateValue 
+	
+	}
+	
+]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<choice doc:name="Choice" doc:id="4f3d7388-20d8-4d68-b87f-d93fbf60f738" >
+			<when expression="#[payload.dateValue != null]">
+				<os:clear doc:name="Clear" doc:id="fb6578b3-11e4-494b-a5dd-c4817be5dc71" objectStore="Object_store"/>
+				<os:store key="watermark" failOnNullValue="false" objectStore="Object_store">
+        <os:value><![CDATA[#[max(payload.dateValue)]]]></os:value>
+    </os:store>
+			</when>
+			<otherwise >
+				<logger level="INFO" doc:name="Logger" doc:id="c0c31e63-db09-4238-8be9-92c216952d21" message="Default watermark"/>
+			</otherwise>
+		</choice>
+		<os:retrieve doc:name="Retrieve" doc:id="d93b64bb-13a7-4c82-bb6e-8bc45f0a27d5" key="watermark" objectStore="Object_store" target="watermark"/>
+		<logger level="INFO" doc:name="Logger" doc:id="2722f71f-bea9-4918-8d1f-699505a963ec" message="#[vars.watermark]" />
+</flow>
+</mule>
